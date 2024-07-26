@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CUPE free spacial
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  unblur images on all pages of cupe.live
 // @author       testbug
 // @match        https://*.cupe.live/*
@@ -28,8 +28,15 @@
             }
             // Check if the src attribute contains the specific pattern .jpeg?tr=w-250,h-250,bl-70
             if (src.includes('.jpeg?tr=w-250,h-250,bl-70')) {
-                // Replace the pattern with .jpeg?tr=w-250,h-250
+                // Replace the pattern with .jpeg
                 const newSrc = src.replace('.jpeg?tr=w-250,h-250,bl-70', '.jpeg');
+                // Update the src attribute of the image element
+                img.src = newSrc;
+            }
+            // Check if the src attribute contains the specific pattern _cover.jpg?tr=w-1200,bl-70
+            if (src.includes('_cover.jpg?tr=w-1200,bl-70')) {
+                // Replace the pattern with .mp4
+                const newSrc = src.replace('_cover.jpg?tr=w-1200,bl-70', '.mp4');
                 // Update the src attribute of the image element
                 img.src = newSrc;
             }
