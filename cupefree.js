@@ -1,65 +1,92 @@
 // ==UserScript==
-// @name         CUPE free spacial
+// @name         CUPE Free Spatial Enhanced for Albums
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  unblur images on all pages of cupe.live
+// @version      2.0
+// @description  Unblur images and videos on cupe.live: fix bl-* params, handle covers, remove SVGs, overlays, zIndex, and opacity
 // @author       testbug
 // @match        https://*.cupe.live/*
 // @grant        none
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
-    // Function to modify image URLs and remove SVG images
-    function modifyAndRemoveImages() {
-        // Select all image elements on the page
-        const images = document.querySelectorAll('img');
+    const debounce = (fn, delay) => {
+        let timeout;
+        return (...args) => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => fn(...args), delay);
+        };
+    };
 
-        // Loop through each image element
-        images.forEach(img => {
-            const src = img.src;
-            // Check if the src attribute contains the specific pattern .jpeg?tr=w-1200,bl-70
-            if (src.includes('.jpeg?tr=w-1200,bl-70')) {
-                // Replace the pattern with .jpeg
-                const newSrc = src.replace('.jpeg?tr=w-1200,bl-70', '.jpeg');
-                // Update the src attribute of the image element
-                img.src = newSrc;
-            }
-            // Check if the src attribute contains the specific pattern .jpeg?tr=w-250,h-250,bl-70
-            if (src.includes('.jpeg?tr=w-250,h-250,bl-70')) {
-                // Replace the pattern with .jpeg
-                const newSrc = src.replace('.jpeg?tr=w-250,h-250,bl-70', '.jpeg');
-                // Update the src attribute of the image element
-                img.src = newSrc;
-            }
-            // Check if the src attribute contains the specific pattern _cover.jpg?tr=w-1200,bl-70
-            if (src.includes('_cover.jpg?tr=w-1200,bl-70')) {
-                // Replace the pattern with .mp4
-                const newSrc = src.replace('_cover.jpg?tr=w-1200,bl-70', '.mp4');
-                // Update the src attribute of the image element
-                img.src = newSrc;
-            }
-            // Check if the src attribute ends with .svg
-            if (src.endsWith('.svg')) {
-                // Remove the image element from the DOM
-                img.remove();
-            }
-        });
+    function unblurMedia() {
+        try {
+            const patterns = [
+                { match: /\bbl-\d+\b/, replace: 'bl-0' },
+                { match: /_cover\.jpe?g\?tr=.*bl-\d+/, replace: (url) => url.replace(/_cover\.jpe?g\?.*$/, '.mp4') },
+                { match: /([?&])(blur|bl)-\d+/g, replace: '$1bl-0' }
+            ];
+
+            const processSrc = (src) => {
+                let newSrc = src;
+                patterns.forEach(({ match, replace }) => {
+                    newSrc = typeof replace === 'function' ? replace(newSrc) : newSrc.replace(match, replace);
+                });
+                return newSrc;
+            };
+
+            document.querySelectorAll('img').forEach(img => {
+                const src = img.src;
+                if (!src || img.dataset.processed) return;
+                img.dataset.processed = 'true';
+
+                if (src.endsWith('.svg')) {
+                    img.remove();
+                    return;
+                }
+
+                const newSrc = processSrc(src);
+                if (newSrc !== src) {
+                    console.log(`Unblurred image: ${src} → ${newSrc}`);
+                    img.src = newSrc;
+                }
+
+                const overlays = img.parentElement?.querySelectorAll('div, span, a') || [];
+                overlays.forEach(overlay => {
+                    const style = window.getComputedStyle(overlay);
+                    if (style.position === 'absolute' || parseFloat(style.opacity) < 1 || parseInt(style.zIndex) > 0) {
+                        overlay.remove();
+                    }
+                });
+            });
+
+            document.querySelectorAll('video source').forEach(source => {
+                const src = source.src;
+                if (!src || source.dataset.processed) return;
+                source.dataset.processed = 'true';
+
+                const newSrc = processSrc(src);
+                if (newSrc !== src) {
+                    console.log(`Unblurred video: ${src} → ${newSrc}`);
+                    source.src = newSrc;
+                    source.parentElement?.load();
+                }
+            });
+        } catch (err) {
+            console.error('CUPE Unblur Error:', err);
+        }
     }
 
-    // Run the function to modify image URLs and remove SVG images on initial page load
-    modifyAndRemoveImages();
+    const observer = new MutationObserver(debounce(unblurMedia, 100));
 
-    // Observe for changes in the DOM to handle dynamically loaded images
-    const observer = new MutationObserver(mutations => {
-        mutations.forEach(mutation => {
-            if (mutation.addedNodes.length) {
-                modifyAndRemoveImages();
-            }
-        });
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src']
     });
 
-    // Configure the observer to watch for changes in the child nodes
-    observer.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('unload', () => observer.disconnect());
+
+    unblurMedia();
 })();
