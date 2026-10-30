@@ -1,92 +1,77 @@
 // ==UserScript==
-// @name         CUPE Free Spatial Enhanced for Albums
+// @name         CUPE Unblur v7 (SVG Mask Killer)
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  Unblur images and videos on cupe.live: fix bl-* params, handle covers, remove SVGs, overlays, zIndex, and opacity
-// @author       testbug
-// @match        https://*.cupe.live/*
+// @version      7.0
+// @description  Unblur images + remove BlurWaterMask SVG overlays
+// @match        *://*.cupe.live/*
+// @match        *://cupe.live/*
 // @grant        none
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const debounce = (fn, delay) => {
-        let timeout;
-        return (...args) => {
-            clearTimeout(timeout);
-            timeout = setTimeout(() => fn(...args), delay);
-        };
-    };
+    const SCAN_INTERVAL = 400;
 
-    function unblurMedia() {
-        try {
-            const patterns = [
-                { match: /\bbl-\d+\b/, replace: 'bl-0' },
-                { match: /_cover\.jpe?g\?tr=.*bl-\d+/, replace: (url) => url.replace(/_cover\.jpe?g\?.*$/, '.mp4') },
-                { match: /([?&])(blur|bl)-\d+/g, replace: '$1bl-0' }
-            ];
-
-            const processSrc = (src) => {
-                let newSrc = src;
-                patterns.forEach(({ match, replace }) => {
-                    newSrc = typeof replace === 'function' ? replace(newSrc) : newSrc.replace(match, replace);
-                });
-                return newSrc;
-            };
-
-            document.querySelectorAll('img').forEach(img => {
-                const src = img.src;
-                if (!src || img.dataset.processed) return;
-                img.dataset.processed = 'true';
-
-                if (src.endsWith('.svg')) {
-                    img.remove();
-                    return;
-                }
-
-                const newSrc = processSrc(src);
-                if (newSrc !== src) {
-                    console.log(`Unblurred image: ${src} → ${newSrc}`);
-                    img.src = newSrc;
-                }
-
-                const overlays = img.parentElement?.querySelectorAll('div, span, a') || [];
-                overlays.forEach(overlay => {
-                    const style = window.getComputedStyle(overlay);
-                    if (style.position === 'absolute' || parseFloat(style.opacity) < 1 || parseInt(style.zIndex) > 0) {
-                        overlay.remove();
-                    }
-                });
-            });
-
-            document.querySelectorAll('video source').forEach(source => {
-                const src = source.src;
-                if (!src || source.dataset.processed) return;
-                source.dataset.processed = 'true';
-
-                const newSrc = processSrc(src);
-                if (newSrc !== src) {
-                    console.log(`Unblurred video: ${src} → ${newSrc}`);
-                    source.src = newSrc;
-                    source.parentElement?.load();
-                }
-            });
-        } catch (err) {
-            console.error('CUPE Unblur Error:', err);
+    // 1. ฉีด CSS เพื่อซ่อน SVG Mask ทันทีที่มันโหลดมา (ทำงานไวที่สุด)
+    const style = document.createElement('style');
+    style.textContent = `
+        img[src*="BlurWaterMask"], 
+        div[style*="BlurWaterMask"], 
+        [style*="BlurWaterMask"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
         }
+    `;
+    document.head.appendChild(style);
+
+    function clean(url) {
+        if (!url || typeof url !== 'string') return url;
+        if (!/bl-\d+/.test(url)) return url;
+        return url
+            .replace(/,bl-\d+/g, '')
+            .replace(/bl-\d+,/g, '')
+            .replace(/([?&])bl-\d+/g, '$1');
     }
 
-    const observer = new MutationObserver(debounce(unblurMedia, 100));
+    function scan() {
+        let fixed = 0;
 
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['src']
-    });
+        // --- ลบ SVG Mask ที่ซ้อนทับรูป ---
+        document.querySelectorAll('img, div').forEach(el => {
+            // ถ้าเป็นแท็ก img ที่ src มีคำว่า BlurWaterMask ให้ลบทิ้ง
+            if (el.tagName === 'IMG' && el.src && el.src.includes('BlurWaterMask')) {
+                el.remove();
+                fixed++;
+            }
+            // ถ้าเป็น div ที่ใช้ background-image เป็น SVG Mask ให้ลบทิ้ง
+            if (el.style && el.style.backgroundImage && el.style.backgroundImage.includes('BlurWaterMask')) {
+                el.style.display = 'none';
+                fixed++;
+            }
+        });
 
-    window.addEventListener('unload', () => observer.disconnect());
+        // --- ลบ Blur ของภาพปกติ (จากรอบที่แล้ว) ---
+        document.querySelectorAll('img').forEach(function (i) {
+            if (i.src && /bl-\d+/.test(i.src)) {
+                try {
+                    i.removeAttribute('srcset');
+                    i.removeAttribute('sizes');
+                    i.src = clean(i.src);
+                    fixed++;
+                } catch (e) {}
+            }
+        });
 
-    unblurMedia();
+        if (fixed > 0) console.log('[CUPE v7] Fixed (Images + Masks):', fixed);
+    }
+
+    // โหลดปุ๊บสแกนปั๊บ + สแกนตลอดเวลา
+    scan();
+    setInterval(scan, SCAN_INTERVAL);
+
+    // สแกนซ้ำเมื่อมีการเลื่อนจอ (Lazy Load)
+    document.addEventListener('scroll', () => setTimeout(scan, 100), { passive: true });
 })();
